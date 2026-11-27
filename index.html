@@ -1033,13 +1033,9 @@
   <div id="toast-container" class="fixed top-4 right-4 z-50 flex flex-col gap-2 max-w-xs w-full pointer-events-none"></div>
 
   <!-- =====================================================================
-       APPLICATION JAVASCRIPT (Firebase Firestore Cloud Sync + In-Memory Fallback)
+       APPLICATION JAVASCRIPT (Instant UI Bindings + Firebase Cloud Sync)
   ====================================================================== -->
-  <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-    import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-    import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
+  <script>
     /**
      * GITHUB PAGES / SELF-HOSTING FIREBASE CONFIGURATION:
      * Connected to Firebase project: bimsquared
@@ -1073,6 +1069,7 @@
     let currentUser = null;
     let unsubscribeSnapshot = null;
     let isApplyingRemoteSnapshot = false;
+    let firestoreSaveFn = null;
 
     const WORLD_CURRENCIES = [
       { code: 'USD', symbol: '$', name: 'US Dollar', locale: 'en-US', decimals: 2 },
@@ -1128,6 +1125,13 @@
       'Other Income'
     ];
 
+    function getLocalISODate(dateObj = new Date()) {
+      const y = dateObj.getFullYear();
+      const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+      const d = String(dateObj.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+
     const appState = {
       currentView: 'dashboard',
       transactions: [],
@@ -1167,32 +1171,10 @@
       if (uidEl && userIdText !== null) uidEl.textContent = userIdText;
     }
 
-    function getUserStateDocRef(uid) {
-      // Strict Firestore private user path: /artifacts/{appId}/users/{userId}/appState/main
-      return doc(db, 'artifacts', appId, 'users', uid, 'appState', 'main');
-    }
-
     async function persistState() {
       if (isApplyingRemoteSnapshot) return;
-      if (!db || !currentUser) {
-        return;
-      }
-
-      try {
-        updateCloudStatusUI('Syncing to Firebase...', 'bg-amber-500 animate-pulse');
-        const snapshot = {
-          transactions: appState.transactions,
-          goals: appState.goals,
-          categories: appState.categories,
-          budgets: appState.budgets,
-          settings: appState.settings,
-          updatedAt: new Date().toISOString()
-        };
-        await setDoc(getUserStateDocRef(currentUser.uid), snapshot, { merge: true });
-        updateCloudStatusUI('Synced with Firebase Cloud', 'bg-emerald-500');
-      } catch (e) {
-        console.error('Firestore save error:', e);
-        updateCloudStatusUI('Cloud sync error (check Firestore rules)', 'bg-rose-500');
+      if (typeof firestoreSaveFn === 'function') {
+        await firestoreSaveFn();
       }
     }
 
@@ -1238,104 +1220,6 @@
         switchView(appState.currentView);
       } finally {
         isApplyingRemoteSnapshot = false;
-      }
-    }
-
-    function startRealtimeSync(user) {
-      if (!db || !user) return;
-      if (unsubscribeSnapshot) {
-        unsubscribeSnapshot();
-      }
-
-      const docRef = getUserStateDocRef(user.uid);
-      unsubscribeSnapshot = onSnapshot(
-        docRef,
-        (docSnap) => {
-          updateCloudStatusUI('Synced with Firebase Cloud', 'bg-emerald-500', `User ID: ${user.uid}`);
-          if (docSnap.exists()) {
-            applyRemoteState(docSnap.data());
-          } else {
-            // Initialize user's cloud document on first login
-            persistState();
-          }
-        },
-        (error) => {
-          console.error('Firestore onSnapshot error:', error);
-          updateCloudStatusUI('Firestore permission or network error', 'bg-rose-500', `User ID: ${user.uid}`);
-        }
-      );
-    }
-
-    async function initFirebaseConnection() {
-      if (!firebaseConfig) {
-        updateCloudStatusUI(
-          'Offline / In-Memory Mode (Paste GITHUB_FIREBASE_CONFIG in index.html to connect Firebase)',
-          'bg-amber-500',
-          'User ID: Local Session Only'
-        );
-        return;
-      }
-
-      try {
-        fbApp = initializeApp(firebaseConfig);
-        auth = getAuth(fbApp);
-        db = getFirestore(fbApp);
-
-        onAuthStateChanged(auth, (user) => {
-          currentUser = user;
-          if (user) {
-            updateCloudStatusUI('Connected to Firebase', 'bg-emerald-500', `User ID: ${user.uid}`);
-            startRealtimeSync(user);
-          } else {
-            updateCloudStatusUI('Signing in to Firebase...', 'bg-amber-500', 'User ID: Authenticating...');
-          }
-        });
-
-        // Authenticate FIRST before any Firestore operations
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
-        }
-      } catch (err) {
-        console.error('Firebase initialization failed:', err);
-        updateCloudStatusUI('Firebase connection failed (running in-memory)', 'bg-rose-500', 'User ID: Local Session');
-      }
-    }
-
-    function loadPersistedState() {
-      try {
-        const raw = localStorage.getItem(STORAGE_KEY);
-        if (!raw) return false;
-        const parsed = JSON.parse(raw);
-        if (!parsed || typeof parsed !== 'object') return false;
-
-        if (Array.isArray(parsed.transactions)) appState.transactions = parsed.transactions;
-        if (Array.isArray(parsed.goals)) appState.goals = parsed.goals;
-        if (parsed.categories && Array.isArray(parsed.categories.expense)) {
-          appState.categories = parsed.categories;
-        }
-        if (parsed.budgets && typeof parsed.budgets === 'object') {
-          appState.budgets = {
-            monthly: Number(parsed.budgets.monthly) || 0,
-            categories: parsed.budgets.categories || {}
-          };
-        }
-        if (parsed.settings && typeof parsed.settings === 'object') {
-          appState.settings = {
-            theme: parsed.settings.theme || 'light',
-            currency: (parsed.settings.currency && parsed.settings.currency.symbol)
-              ? parsed.settings.currency
-              : WORLD_CURRENCIES[0],
-            dateFormat: parsed.settings.dateFormat || 'DD/MM/YYYY',
-            welcomeDismissed: Boolean(parsed.settings.welcomeDismissed),
-            startedMonth: parsed.settings.startedMonth || getLocalISODate().slice(0, 7)
-          };
-        }
-        return true;
-      } catch (e) {
-        console.warn('LocalStorage read warning:', e);
-        return false;
       }
     }
 
@@ -3267,7 +3151,7 @@
     });
 
     /* -------------------- INITIALIZATION -------------------- */
-    async function initApp() {
+    function initApp() {
       try {
         if (!appState.settings.startedMonth) {
           appState.settings.startedMonth = getLocalISODate().slice(0, 7);
@@ -3285,7 +3169,6 @@
         }
 
         switchView('dashboard');
-        await initFirebaseConnection();
       } catch (err) {
         console.error('PennyPulse init error:', err);
       }
@@ -3296,6 +3179,99 @@
     } else {
       initApp();
     }
+  </script>
+
+  <!-- Firebase Module Loader (Runs asynchronously without blocking UI buttons) -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+    function getUserStateDocRef(uid) {
+      return doc(db, 'artifacts', appId, 'users', uid, 'appState', 'main');
+    }
+
+    firestoreSaveFn = async function () {
+      if (!db || !currentUser) return;
+      try {
+        updateCloudStatusUI('Syncing to Firebase...', 'bg-amber-500 animate-pulse');
+        const snapshot = {
+          transactions: appState.transactions,
+          goals: appState.goals,
+          categories: appState.categories,
+          budgets: appState.budgets,
+          settings: appState.settings,
+          updatedAt: new Date().toISOString()
+        };
+        await setDoc(getUserStateDocRef(currentUser.uid), snapshot, { merge: true });
+        updateCloudStatusUI('Synced with Firebase Cloud', 'bg-emerald-500');
+      } catch (e) {
+        console.error('Firestore save error:', e);
+        updateCloudStatusUI('Cloud sync error (check Firestore rules)', 'bg-rose-500');
+      }
+    };
+
+    function startRealtimeSync(user) {
+      if (!db || !user) return;
+      if (unsubscribeSnapshot) {
+        unsubscribeSnapshot();
+      }
+
+      const docRef = getUserStateDocRef(user.uid);
+      unsubscribeSnapshot = onSnapshot(
+        docRef,
+        (docSnap) => {
+          updateCloudStatusUI('Synced with Firebase Cloud', 'bg-emerald-500', `User ID: ${user.uid}`);
+          if (docSnap.exists()) {
+            applyRemoteState(docSnap.data());
+          } else {
+            persistState();
+          }
+        },
+        (error) => {
+          console.error('Firestore onSnapshot error:', error);
+          updateCloudStatusUI('Firestore permission or network error', 'bg-rose-500', `User ID: ${user.uid}`);
+        }
+      );
+    }
+
+    async function initFirebaseConnection() {
+      if (!firebaseConfig) {
+        updateCloudStatusUI(
+          'Offline / In-Memory Mode',
+          'bg-amber-500',
+          'User ID: Local Session Only'
+        );
+        return;
+      }
+
+      try {
+        fbApp = initializeApp(firebaseConfig);
+        auth = getAuth(fbApp);
+        db = getFirestore(fbApp);
+
+        onAuthStateChanged(auth, (user) => {
+          currentUser = user;
+          if (user) {
+            updateCloudStatusUI('Connected to Firebase', 'bg-emerald-500', `User ID: ${user.uid}`);
+            startRealtimeSync(user);
+          } else {
+            updateCloudStatusUI('Signing in to Firebase...', 'bg-amber-500', 'User ID: Authenticating...');
+          }
+        });
+
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (err) {
+        console.error('Firebase initialization failed:', err);
+        updateCloudStatusUI('Firebase connection failed (running in-memory)', 'bg-rose-500', 'User ID: Local Session');
+      }
+    }
+
+    initFirebaseConnection();
   </script>
 </body>
 </html>

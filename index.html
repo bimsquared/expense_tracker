@@ -150,6 +150,20 @@
 
         <!-- Header Actions -->
         <div class="flex items-center gap-2">
+          <!-- Quick Currency Selector -->
+          <select id="header-currency-select" onchange="changeCurrency(this.value)" title="Select Currency" class="px-2.5 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition cursor-pointer">
+            <option value="₱">₱ PHP</option>
+            <option value="$">$ USD</option>
+            <option value="€">€ EUR</option>
+            <option value="£">£ GBP</option>
+            <option value="¥">¥ JPY</option>
+            <option value="₹">₹ INR</option>
+            <option value="S$">S$ SGD</option>
+            <option value="A$">A$ AUD</option>
+            <option value="C$">C$ CAD</option>
+            <option value="AED ">AED</option>
+          </select>
+
           <!-- Mobile / Top Bar Account Sync Pill -->
           <button id="header-google-btn" onclick="openAuthModal()" class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 transition">
             <span id="cloud-dot-header" class="w-2 h-2 rounded-full bg-amber-400"></span>
@@ -1057,8 +1071,19 @@
     // ==================== RENDER FUNCTIONS ====================
     function renderAll() {
       applyTheme();
+      const currentCurr = window.appState.settings.currency || '₱';
       const currencySelect = document.getElementById('currency-select');
-      if (currencySelect) currencySelect.value = window.appState.settings.currency || '₱';
+      const headerCurrencySelect = document.getElementById('header-currency-select');
+      if (currencySelect) currencySelect.value = currentCurr;
+      if (headerCurrencySelect) {
+        if (![...headerCurrencySelect.options].some(o => o.value === currentCurr)) {
+          const opt = document.createElement('option');
+          opt.value = currentCurr;
+          opt.textContent = currentCurr.trim();
+          headerCurrencySelect.appendChild(opt);
+        }
+        headerCurrencySelect.value = currentCurr;
+      }
 
       renderDashboard();
       renderTransactionsTable();
